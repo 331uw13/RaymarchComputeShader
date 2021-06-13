@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/fcntl.h>
-
+#include <math.h>
 #include "gl3w.h"
 #include <GLFW/glfw3.h>
 
@@ -21,7 +21,12 @@ static GLFWwindow* window;
 #define OPENGL_VERSION_MA 4
 #define OPENGL_VERSION_MI 3
 
+static float cursor_x = 0.0;
+static float cursor_y = 0.0;
+static float p_cursor_x = 0.0;
+static float p_cursor_y = 0.0;
 
+#define PI_R (M_PI/180.0)
 
 
 void cleanup() {
@@ -30,6 +35,17 @@ void cleanup() {
 	puts("bye.");
 }
 
+void cursor_pos_callback(GLFWwindow* window, double x, double y) {
+	
+	p_cursor_x = cursor_x;
+	p_cursor_y = cursor_y;
+	
+	cursor_x += x-p_cursor_x;
+	cursor_y += y-p_cursor_y;
+}
+
+#define RES_X 1200
+#define RES_Y 800
 
 u8 init() {
 	u8 res = 0;
@@ -43,13 +59,18 @@ u8 init() {
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, OPENGL_VERSION_MA);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, OPENGL_VERSION_MI);
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-	//glfwWindowHint(GLFW_DOUBLEBUFFER, GLFW_TRUE);
+	glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_TRUE);
+	glfwWindowHint(GLFW_DOUBLEBUFFER, GLFW_TRUE);
+	
+	glfwWindowHint(GLFW_SAMPLES, 0);
 
-	if((window = glfwCreateWindow(1200, 850, "testing ideas.", NULL, NULL)) == NULL) {
+
+	if((window = glfwCreateWindow(RES_X, RES_Y, "testing ideas.", NULL, NULL)) == NULL) {
 		fprintf(stderr, "Failed to create window\n");
 		goto finish;
 	}
 
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	glfwMakeContextCurrent(window);
 
 	if(gl3wInit() != GL3W_OK) {
@@ -63,29 +84,18 @@ u8 init() {
 		goto finish;
 	}
 
+
+	cursor_x = p_cursor_x = 0.0;
+	cursor_y = p_cursor_y = 0.0;
+	
+	glfwSetCursorPosCallback(window, cursor_pos_callback);
+	glfwSetCursorPos(window, cursor_x, cursor_y);
+
+
 	res = 1;
 
 finish:
 	return res;
-}
-
-void check_groups() {
-	int g[3];
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, &g[0]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 1, &g[1]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 2, &g[2]);
-
-	printf("max work group sizes:  (x=%i, y=%i, z=%i)\n", g[0], g[1], g[2]);
-
-	
-	memset(g, 0, sizeof *g * 3);
-
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0, &g[0]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 1, &g[1]);
-	glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, 2, &g[2]);
-
-	printf("max work group counts: (x=%i, y=%i, z=%i)\n", g[0], g[1], g[2]);
-
 }
 
 
@@ -129,8 +139,6 @@ void main_loop() {
 		}
 
 		buf[sb.st_size] = '\0';
-		printf("\033[90m%s\033[0m\n", buf);
-
 
 		int shader = compile_shader((const char*)buf, GL_COMPUTE_SHADER);
 		compute_program = create_program(&shader, 1);
@@ -139,7 +147,6 @@ void main_loop() {
 		close(fd);
 		
 	}
-
 
 
 	{
@@ -160,7 +167,7 @@ void main_loop() {
 			"in vec2 tex_coord;"
 			
 			"void main() {"
-				"out_color = texture(texture0, tex_coord);"
+				"out_color = texture(texture0, tex_coord*0.25);"
 			"}";
 
 		int s[] = {
@@ -175,16 +182,11 @@ void main_loop() {
 	}
 
 
-	check_groups();
 
 	u32 texture = 0;
 
-	int window_w = 0;
-	int window_h = 0;
-	glfwGetWindowSize(window, &window_w, &window_h);
-
-	int texture_w = window_w/3;
-	int texture_h = window_h/3;
+	int texture_w = 640/2;
+	int texture_h = 480/2;
 
 	glGenTextures(1, &texture);
 	glActiveTexture(GL_TEXTURE0);
@@ -192,11 +194,15 @@ void main_loop() {
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, texture_w, texture_h, 0, GL_RGBA, GL_FLOAT, NULL);
-	glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+
+	int format = GL_RGBA16F;
+	
+	glTexImage2D(GL_TEXTURE_2D, 0, format, texture_w, texture_h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_READ_WRITE, format);
+
 
 	float points[] = {
 		-1.0, -1.0,
@@ -217,27 +223,69 @@ void main_loop() {
 	
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float)*2, 0);
 	glEnableVertexAttribArray(0);
+	
+	glfwSwapInterval(1);
 
-	glViewport(0.0, 0.0, window_w*2, window_h*2);
+	int detail = 2;
+
+	int test_w = texture_w/detail;
+	int test_h = texture_h/detail;
+	
+
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glBindVertexArray(vao);
+
+	const int time_uniform = glGetUniformLocation(compute_program, "time");
+	const int camera_uniform = glGetUniformLocation(compute_program, "camera");
+	const int player_uniform = glGetUniformLocation(compute_program, "player");
+
+	float player_x = 5.0;
+	float player_y = 0.0;
+	float player_z = 0.0;
 
 
 	glClearColor(0.0, 0.0, 0.0, 1.0);
+
 	while(!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 
+		if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+			glfwSetWindowShouldClose(window, 1);
+		}
+
+
+		float look_x = -(0.2*cursor_x)*PI_R;
+		float look_y = -(0.2*cursor_y)*PI_R;
+		
+		float dir_x = cos(look_x)*cos(look_y);
+		float dir_z = sin(look_x)*cos(look_y);
+
+
+		float speed = 0.25;
+		if(glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+			player_z += speed*dir_x;
+			player_x -= speed*dir_z;
+		}
+
+		if(glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+			player_z -= speed*dir_x;
+			player_x += speed*dir_z;
+		}
+
 		glUseProgram(compute_program);
-		glUniform1f(glGetUniformLocation(compute_program, "time"), glfwGetTime());
+		glUniform1f(time_uniform, glfwGetTime());
+		glUniform2f(camera_uniform, look_x, look_y);
+		glUniform3f(player_uniform, player_x, player_y, player_z);
 
-		glDispatchCompute(texture_w, texture_h, 1);
+
+		glDispatchCompute(test_w, test_h, 1);
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
 		glClear(GL_COLOR_BUFFER_BIT);
 		
-		glUseProgram(texture_program);
-		glBindVertexArray(vao);
-		glBindTexture(GL_TEXTURE_2D, texture);
-		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
+		glUseProgram(texture_program);
+		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+		
 		glfwSwapBuffers(window);
 	}
 
